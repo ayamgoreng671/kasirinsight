@@ -14,6 +14,4 @@ type Product struct {
 
 	SellingPrice float64 `json:"selling_price"`
 	Cogs         float64 `json:"cogs"`
-
-	UserID uint `json:"user_id"` // owner
 }

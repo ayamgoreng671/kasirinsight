@@ -24,8 +24,8 @@ func CreateProduct(c *gin.Context) {
 	}
 
 	// get user from middleware
-	userID, _ := c.Get("user_id")
-	product.UserID = uint(userID.(float64))
+	// userID, _ := c.Get("user_id")
+	// product.UserID = uint(userID.(float64))
 
 	if err := config.DB.Create(&product).Error; err != nil {
 		c.JSON(500, gin.H{"error": "Failed to create product"})
