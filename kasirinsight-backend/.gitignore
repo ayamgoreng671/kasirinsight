@@ -1,0 +1,63 @@
+# =========================
+# Go build artifacts
+# =========================
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# =========================
+# Binaries & build folders
+# =========================
+/bin/
+/build/
+/dist/
+/tmp/
+
+# =========================
+# Air (live reload)
+# =========================
+.air.toml
+tmp/
+*.log
+
+# =========================
+# Environment variables
+# =========================
+.env
+
+# =========================
+# IDE / Editor files
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS generated files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Dependency directories (if any)
+# =========================
+vendor/
+
+# =========================
+# Misc
+# =========================
+coverage.out

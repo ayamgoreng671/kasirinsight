@@ -1,0 +1,8 @@
+package models
+
+import "gorm.io/gorm"
+
+type {mn} struct {
+	gorm.Model
+{properties}
+}

@@ -1,0 +1,78 @@
+package controllers
+
+import (
+	"{project}/config"
+	"{project}/models"
+
+	"github.com/gin-gonic/gin"
+)
+
+func GetAll{mn}s(c *gin.Context) {
+	var items []models.{mn}
+
+	config.DB.Find(&items)
+
+	c.JSON(200, gin.H{"data": items})
+}
+
+func Create{mn}(c *gin.Context) {
+	var item models.{mn}
+
+	if err := c.ShouldBindJSON(&item); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := config.DB.Create(&item).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create {mn}"})
+		return
+	}
+
+	c.JSON(201, gin.H{"data": item})
+}
+
+func Get{mn}(c *gin.Context) {
+	id := c.Param("id")
+
+	var item models.{mn}
+	if err := config.DB.First(&item, id).Error; err != nil {
+		c.JSON(404, gin.H{"error": "{mn} not found"})
+		return
+	}
+
+	c.JSON(200, gin.H{"data": item})
+}
+
+func Update{mn}(c *gin.Context) {
+	id := c.Param("id")
+
+	var item models.{mn}
+	if err := config.DB.First(&item, id).Error; err != nil {
+		c.JSON(404, gin.H{"error": "{mn} not found"})
+		return
+	}
+
+	var input models.{mn}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	config.DB.Model(&item).Updates(input)
+
+	c.JSON(200, gin.H{"data": item})
+}
+
+func Delete{mn}(c *gin.Context) {
+	id := c.Param("id")
+
+	var item models.{mn}
+	if err := config.DB.First(&item, id).Error; err != nil {
+		c.JSON(404, gin.H{"error": "{mn} not found"})
+		return
+	}
+
+	config.DB.Delete(&item)
+
+	c.JSON(200, gin.H{"message": "{mn} deleted"})
+}
