@@ -26,9 +26,7 @@ import {
   Users,
   Phone,
   MapPin,
-  FileText,
-  BarChart3,
-  Calendar
+  FileText
 } from 'lucide-react';
 import { db } from './lib/db';
 import { Product, Transaction, BusinessConfig, BusinessType, TransactionStatus, AuditLog, Customer } from './types';
@@ -888,9 +886,9 @@ const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transac
   
   // Simple Filter State
   const now = new Date();
-  const [year, setYear] = useState<string>(now.getFullYear().toString());
-  const [month, setMonth] = useState<string>((now.getMonth() + 1).toString());
-  const [day, setDay] = useState<string>(now.getDate().toString());
+  const [year, setYear] = useState<string>('all');
+  const [month, setMonth] = useState<string>('all');
+  const [day, setDay] = useState<string>('all');
 
   // Range Filter State
   const [startDate, setStartDate] = useState<string>('');
@@ -931,12 +929,6 @@ const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transac
   const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE);
   const paginatedTransactions = [...filteredTransactions].reverse().slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-  const totalRevenue = filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
-  const totalProfit = filteredTransactions.reduce((sum, t) => {
-    const tProfit = t.items.reduce((iSum, item) => iSum + (item.quantity * (item.price - item.cogs)), 0);
-    return sum + tProfit;
-  }, 0);
-
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, year, month, day, filterMode, startDate, endDate]);
@@ -951,16 +943,6 @@ const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transac
         <div>
           <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Transaction Ledger</h1>
           <p className="text-[#dae2fd]/60 font-body">Historical record of all architectural financial exchanges.</p>
-        </div>
-        <div className="flex gap-4">
-          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[160px]">
-            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Revenue</p>
-            <p className="text-2xl font-headline font-black text-[#00f5d4] tracking-tight">{formatCurrency(totalRevenue)}</p>
-          </div>
-          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[160px]">
-            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Profit</p>
-            <p className="text-2xl font-headline font-black text-[#4edea3] tracking-tight">{formatCurrency(totalProfit)}</p>
-          </div>
         </div>
       </div>
 
@@ -1420,561 +1402,6 @@ const Customers = ({ customers, onUpdate }: { customers: Customer[], onUpdate: (
   );
 };
 
-const ReportPage = ({ transactions, products, customers }: { transactions: Transaction[], products: Product[], customers: Customer[] }) => {
-  const [filterMode, setFilterMode] = useState<'simple' | 'range'>('simple');
-  const [aggregation, setAggregation] = useState<'day' | 'month' | 'year'>('day');
-  const now = new Date();
-  const [year, setYear] = useState<string>(now.getFullYear().toString());
-  const [month, setMonth] = useState<string>((now.getMonth() + 1).toString());
-  const [day, setDay] = useState<string>('all');
-
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const filteredTransactions = transactions.filter(t => {
-    const tDate = new Date(t.timestamp);
-    if (filterMode === 'simple') {
-      const matchesYear = year === 'all' || tDate.getFullYear().toString() === year;
-      const matchesMonth = month === 'all' || (tDate.getMonth() + 1).toString() === month;
-      const matchesDay = day === 'all' || tDate.getDate().toString() === day;
-      return matchesYear && matchesMonth && matchesDay;
-    } else {
-      if (!startDate || !endDate) return true;
-      const start = new Date(startDate).getTime();
-      const end = new Date(endDate).getTime();
-      return t.timestamp >= start && t.timestamp <= end;
-    }
-  });
-
-  const aggregatedData: Record<string, { revenue: number, profit: number, count: number }> = {};
-  filteredTransactions.forEach(t => {
-    let dateKey = '';
-    const date = new Date(t.timestamp);
-    if (aggregation === 'day') dateKey = format(date, 'yyyy-MM-dd');
-    else if (aggregation === 'month') dateKey = format(date, 'yyyy-MM');
-    else dateKey = format(date, 'yyyy');
-
-    if (!aggregatedData[dateKey]) {
-      aggregatedData[dateKey] = { revenue: 0, profit: 0, count: 0 };
-    }
-    aggregatedData[dateKey].revenue += t.totalAmount;
-    aggregatedData[dateKey].profit += t.items.reduce((sum, item) => sum + (item.quantity * (item.price - item.cogs)), 0);
-    aggregatedData[dateKey].count += 1;
-  });
-
-  const reportList = Object.entries(aggregatedData).map(([date, data]) => ({
-    date,
-    ...data
-  })).sort((a, b) => b.date.localeCompare(a.date));
-
-  const totalPages = Math.ceil(reportList.length / ITEMS_PER_PAGE);
-  const paginatedReport = reportList.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
-
-  const totalRevenue = reportList.reduce((sum, d) => sum + d.revenue, 0);
-  const totalProfit = reportList.reduce((sum, d) => sum + d.profit, 0);
-  const totalCount = reportList.reduce((sum, d) => sum + d.count, 0);
-
-  // Product Performance Analysis
-  const productStats: Record<string, { name: string, quantity: number, revenue: number, profit: number }> = {};
-  filteredTransactions.forEach(t => {
-    t.items.forEach(item => {
-      if (!productStats[item.productId]) {
-        productStats[item.productId] = { name: item.productName, quantity: 0, revenue: 0, profit: 0 };
-      }
-      productStats[item.productId].quantity += item.quantity;
-      productStats[item.productId].revenue += item.quantity * item.price;
-      productStats[item.productId].profit += item.quantity * (item.price - item.cogs);
-    });
-  });
-
-  const productList = Object.values(productStats);
-  const topSelling = [...productList].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
-  const mostProfitable = [...productList].sort((a, b) => b.profit - a.profit).slice(0, 5);
-  
-  const soldProductIds = new Set(Object.keys(productStats));
-  const deadStock = products.filter(p => !soldProductIds.has(p.id));
-
-  // Customer Insights
-  const customerStats: Record<string, { name: string, totalSpend: number, frequency: number, firstTransaction: number }> = {};
-  
-  // First, find first transaction for all customers to determine new vs returning
-  const firstTransactions: Record<string, number> = {};
-  transactions.forEach(t => {
-    if (t.customerId) {
-      if (!firstTransactions[t.customerId] || t.timestamp < firstTransactions[t.customerId]) {
-        firstTransactions[t.customerId] = t.timestamp;
-      }
-    }
-  });
-
-  let newCustomerRevenue = 0;
-  let returningCustomerRevenue = 0;
-  const filteredPeriodStart = filteredTransactions.length > 0 
-    ? Math.min(...filteredTransactions.map(t => t.timestamp))
-    : 0;
-
-  filteredTransactions.forEach(t => {
-    if (t.customerId) {
-      if (!customerStats[t.customerId]) {
-        const customer = customers.find(c => c.id === t.customerId);
-        customerStats[t.customerId] = { 
-          name: customer?.name || 'Unknown Customer', 
-          totalSpend: 0, 
-          frequency: 0,
-          firstTransaction: firstTransactions[t.customerId]
-        };
-      }
-      customerStats[t.customerId].totalSpend += t.totalAmount;
-      customerStats[t.customerId].frequency += 1;
-
-      // New vs Returning logic
-      if (firstTransactions[t.customerId] >= filteredPeriodStart) {
-        newCustomerRevenue += t.totalAmount;
-      } else {
-        returningCustomerRevenue += t.totalAmount;
-      }
-    } else {
-      // Guest transactions are treated as new? Or just ignored for this specific metric?
-      // Usually guest checkout is treated as "New" or "Guest"
-      newCustomerRevenue += t.totalAmount;
-    }
-  });
-
-  const topCustomers = Object.values(customerStats)
-    .sort((a, b) => b.totalSpend - a.totalSpend)
-    .slice(0, 5);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [year, month, day, filterMode, startDate, endDate]);
-
-  const years = Array.from({ length: 5 }, (_, i) => (now.getFullYear() - i).toString());
-  const months = Array.from({ length: 12 }, (_, i) => (i + 1).toString());
-  const days = Array.from({ length: 31 }, (_, i) => (i + 1).toString());
-
-  return (
-    <div className="p-8 space-y-8">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-        <div>
-          <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Business Reports</h1>
-          <p className="text-[#dae2fd]/60 font-body">Daily aggregation of architectural financial performance.</p>
-        </div>
-        <div className="flex gap-4">
-          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[140px]">
-            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Revenue</p>
-            <p className="text-xl font-headline font-black text-[#00f5d4] tracking-tight">{formatCurrency(totalRevenue)}</p>
-          </div>
-          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[140px]">
-            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Profit</p>
-            <p className="text-xl font-headline font-black text-[#4edea3] tracking-tight">{formatCurrency(totalProfit)}</p>
-          </div>
-          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[140px]">
-            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Transactions</p>
-            <p className="text-xl font-headline font-black text-[#dae2fd] tracking-tight">{totalCount}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Product Performance Analysis */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Top Selling Products */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-[#00f5d4]/10 rounded-lg text-[#00f5d4]">
-              <TrendingUp size={20} />
-            </div>
-            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Top Selling Products</h2>
-          </div>
-          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
-            {topSelling.length > 0 ? topSelling.map((p, idx) => (
-              <div key={idx} className="flex justify-between items-center p-4 border-b border-[#3a4a46]/10 last:border-0 hover:bg-[#2d3449]/40 transition-colors">
-                <div>
-                  <p className="text-sm font-headline font-bold text-[#dae2fd]">{p.name}</p>
-                  <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">{p.quantity} Units Sold</p>
-                </div>
-                <p className="font-headline font-bold text-[#00f5d4]">{formatCurrency(p.revenue)}</p>
-              </div>
-            )) : (
-              <div className="p-8 text-center text-[#dae2fd]/20 italic text-sm">No sales data available</div>
-            )}
-          </div>
-        </div>
-
-        {/* Most Profitable Products */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-[#4edea3]/10 rounded-lg text-[#4edea3]">
-              <TrendingUp size={20} />
-            </div>
-            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Most Profitable Products</h2>
-          </div>
-          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
-            {mostProfitable.length > 0 ? mostProfitable.map((p, idx) => (
-              <div key={idx} className="flex justify-between items-center p-4 border-b border-[#3a4a46]/10 last:border-0 hover:bg-[#2d3449]/40 transition-colors">
-                <div>
-                  <p className="text-sm font-headline font-bold text-[#dae2fd]">{p.name}</p>
-                  <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">Margin: {((p.profit / p.revenue) * 100).toFixed(1)}%</p>
-                </div>
-                <p className="font-headline font-bold text-[#4edea3]">{formatCurrency(p.profit)}</p>
-              </div>
-            )) : (
-              <div className="p-8 text-center text-[#dae2fd]/20 italic text-sm">No profit data available</div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Dead Stock Report */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2 bg-[#ffb4ab]/10 rounded-lg text-[#ffb4ab]">
-            <AlertTriangle size={20} />
-          </div>
-          <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Dead Stock Report</h2>
-        </div>
-        <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
-          {deadStock.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-6">
-              {deadStock.map(p => (
-                <div key={p.id} className="p-4 bg-[#0b1326] rounded-xl border border-[#3a4a46]/10 flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-[#2d3449] flex items-center justify-center text-[#dae2fd]/20">
-                    <Package size={20} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-headline font-bold text-[#dae2fd]">{p.name}</p>
-                    <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">Stock: {p.stock} | {p.category}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="p-12 text-center">
-              <CheckCircle2 className="mx-auto mb-4 text-[#4edea3]/40" size={48} />
-              <p className="text-[#dae2fd]/40 uppercase tracking-widest font-bold">All products have sales activity in this period!</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Customer Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
-        {/* Top Customers */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-[#00f5d4]/10 rounded-lg text-[#00f5d4]">
-              <Users size={20} />
-            </div>
-            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Top Customers</h2>
-          </div>
-          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
-            {topCustomers.length > 0 ? topCustomers.map((c, idx) => (
-              <div key={idx} className="flex justify-between items-center p-4 border-b border-[#3a4a46]/10 last:border-0 hover:bg-[#2d3449]/40 transition-colors">
-                <div>
-                  <p className="text-sm font-headline font-bold text-[#dae2fd]">{c.name}</p>
-                  <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">{c.frequency} Visits</p>
-                </div>
-                <p className="font-headline font-bold text-[#00f5d4]">{formatCurrency(c.totalSpend)}</p>
-              </div>
-            )) : (
-              <div className="p-8 text-center text-[#dae2fd]/20 italic text-sm">No customer data available</div>
-            )}
-          </div>
-        </div>
-
-        {/* New vs. Returning Customers */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-[#4edea3]/10 rounded-lg text-[#4edea3]">
-              <History size={20} />
-            </div>
-            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">New vs. Returning</h2>
-          </div>
-          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 p-6 h-full flex flex-col justify-center">
-            <div className="space-y-6">
-              <div>
-                <div className="flex justify-between items-end mb-2">
-                  <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">New Customers</p>
-                  <p className="text-sm font-headline font-bold text-[#00f5d4]">{formatCurrency(newCustomerRevenue)}</p>
-                </div>
-                <div className="h-2 bg-[#0b1326] rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-[#00f5d4] transition-all duration-1000" 
-                    style={{ width: `${(newCustomerRevenue / (newCustomerRevenue + returningCustomerRevenue || 1)) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between items-end mb-2">
-                  <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Returning Customers</p>
-                  <p className="text-sm font-headline font-bold text-[#4edea3]">{formatCurrency(returningCustomerRevenue)}</p>
-                </div>
-                <div className="h-2 bg-[#0b1326] rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-[#4edea3] transition-all duration-1000" 
-                    style={{ width: `${(returningCustomerRevenue / (newCustomerRevenue + returningCustomerRevenue || 1)) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-              <div className="pt-4 border-t border-[#3a4a46]/10 flex justify-between items-center">
-                <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Retention Rate</p>
-                <p className="text-lg font-headline font-bold text-[#dae2fd]">
-                  {((returningCustomerRevenue / (newCustomerRevenue + returningCustomerRevenue || 1)) * 100).toFixed(1)}%
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-6 bg-[#2d3449]/20 p-6 rounded-2xl border border-[#3a4a46]/10">
-        <div className="flex justify-between items-center">
-          <div className="flex bg-[#0b1326] p-1 rounded-lg border border-[#3a4a46]/30">
-            <button 
-              onClick={() => setAggregation('day')}
-              className={cn(
-                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-                aggregation === 'day' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-              )}
-            >
-              Daily
-            </button>
-            <button 
-              onClick={() => setAggregation('month')}
-              className={cn(
-                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-                aggregation === 'month' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-              )}
-            >
-              Monthly
-            </button>
-            <button 
-              onClick={() => setAggregation('year')}
-              className={cn(
-                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-                aggregation === 'year' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-              )}
-            >
-              Yearly
-            </button>
-          </div>
-          <div className="flex bg-[#0b1326] p-1 rounded-lg border border-[#3a4a46]/30">
-            <button 
-              onClick={() => setFilterMode('simple')}
-              className={cn(
-                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-                filterMode === 'simple' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-              )}
-            >
-              Simple Date
-            </button>
-            <button 
-              onClick={() => setFilterMode('range')}
-              className={cn(
-                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-                filterMode === 'range' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-              )}
-            >
-              Date Range
-            </button>
-          </div>
-        </div>
-
-        {filterMode === 'simple' ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Year</label>
-              <select 
-                value={year}
-                onChange={e => setYear(e.target.value)}
-                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
-              >
-                <option value="all">All Years</option>
-                {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Month</label>
-              <select 
-                value={month}
-                onChange={e => setMonth(e.target.value)}
-                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
-              >
-                <option value="all">All Months</option>
-                {months.map(m => <option key={m} value={m}>{format(new Date(2000, parseInt(m) - 1), 'MMMM')}</option>)}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Day</label>
-              <select 
-                value={day}
-                onChange={e => setDay(e.target.value)}
-                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
-              >
-                <option value="all">All Days</option>
-                {days.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Start Date</label>
-              <input 
-                type="date"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">End Date</label>
-              <input 
-                type="date"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 gap-4">
-        <div className="grid grid-cols-12 gap-4 px-6 py-4 text-[10px] uppercase tracking-widest text-[#dae2fd]/60 font-bold">
-          <div className="col-span-3">Date</div>
-          <div className="col-span-2 text-center">Transactions</div>
-          <div className="col-span-3 text-right">Revenue</div>
-          <div className="col-span-3 text-right">Profit</div>
-          <div className="col-span-1"></div>
-        </div>
-
-        {paginatedReport.length > 0 ? paginatedReport.map(item => (
-          <div key={item.date} className="grid grid-cols-12 gap-4 items-center px-6 py-5 bg-[#2d3449]/40 backdrop-blur-xl rounded-lg border border-[#3a4a46]/10 hover:border-[#00f5d4]/30 transition-all group">
-            <div className="col-span-3">
-              <p className="font-headline font-bold text-[#dae2fd] group-hover:text-[#00f5d4] transition-colors uppercase tracking-wider text-sm">
-                {aggregation === 'day' ? format(new Date(item.date), 'EEEE, MMM dd, yyyy') : 
-                 aggregation === 'month' ? format(new Date(item.date), 'MMMM yyyy') : 
-                 item.date}
-              </p>
-            </div>
-            <div className="col-span-2 text-center text-sm font-bold text-[#dae2fd]/60">
-              {item.count}
-            </div>
-            <div className="col-span-3 text-right font-headline font-bold text-[#00f5d4]">
-              {formatCurrency(item.revenue)}
-            </div>
-            <div className="col-span-3 text-right font-headline font-bold text-[#4edea3]">
-              {formatCurrency(item.profit)}
-            </div>
-            <div className="col-span-1 flex justify-end">
-              <TrendingUp size={16} className={cn(item.profit > 0 ? "text-[#4edea3]" : "text-[#ffb4ab]")} />
-            </div>
-          </div>
-        )) : (
-          <div className="text-center py-20 bg-[#2d3449]/20 rounded-xl border border-dashed border-[#3a4a46]/30">
-            <BarChart3 className="mx-auto mb-4 text-[#dae2fd]/20" size={48} />
-            <p className="text-[#dae2fd]/40 uppercase tracking-widest font-bold">No data for selected period</p>
-          </div>
-        )}
-      </div>
-
-      <Pagination 
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onPageChange={setCurrentPage}
-      />
-    </div>
-  );
-};
-
-const SettingsPage = ({ config, onUpdateConfig, logs }: { config: BusinessConfig, onUpdateConfig: (c: BusinessConfig) => void, logs: AuditLog[] }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'general' | 'logs'>('general');
-
-  return (
-    <div className="p-8 space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Settings</h1>
-          <p className="text-[#dae2fd]/60 font-body">Manage your architectural terminal configuration and audit trails.</p>
-        </div>
-        <div className="flex bg-[#2d3449]/20 p-1 rounded-lg border border-[#3a4a46]/10">
-          <button 
-            onClick={() => setActiveSubTab('general')}
-            className={cn(
-              "px-4 py-2 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-              activeSubTab === 'general' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-            )}
-          >
-            General
-          </button>
-          <button 
-            onClick={() => setActiveSubTab('logs')}
-            className={cn(
-              "px-4 py-2 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
-              activeSubTab === 'logs' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
-            )}
-          >
-            Audit Logs
-          </button>
-        </div>
-      </div>
-
-      {activeSubTab === 'general' ? (
-        <div className="max-w-2xl bg-[#2d3449]/20 p-8 rounded-2xl border border-[#3a4a46]/10 space-y-8">
-          <div className="space-y-4">
-            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Business Identity</h2>
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Business Name</label>
-              <input 
-                type="text"
-                value={config.name}
-                onChange={e => onUpdateConfig({ ...config, name: e.target.value })}
-                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-sm font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Terminal Type</label>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {(['coffee', 'retail', 'services', 'custom'] as BusinessType[]).map(type => (
-                  <button
-                    key={type}
-                    onClick={() => onUpdateConfig({ ...config, type })}
-                    className={cn(
-                      "p-4 rounded-xl border transition-all flex flex-col items-center gap-2",
-                      config.type === type 
-                        ? "bg-[#00f5d4]/10 border-[#00f5d4] text-[#00f5d4]" 
-                        : "bg-[#0b1326] border-[#3a4a46]/30 text-[#dae2fd]/40 hover:border-[#dae2fd]/20"
-                    )}
-                  >
-                    {type === 'coffee' && <Coffee size={20} />}
-                    {type === 'retail' && <Store size={20} />}
-                    {type === 'services' && <Wrench size={20} />}
-                    {type === 'custom' && <Cpu size={20} />}
-                    <span className="text-[10px] font-black uppercase tracking-widest">{type}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="pt-8 border-t border-[#3a4a46]/10">
-            <button 
-              onClick={() => onUpdateConfig({ ...config, initialized: false })}
-              className="px-6 py-3 bg-[#ffb4ab]/10 border border-[#ffb4ab]/20 text-[#ffb4ab] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#ffb4ab]/20 transition-all flex items-center gap-2"
-            >
-              <LogOut size={14} />
-              Reset Terminal Configuration
-            </button>
-          </div>
-        </div>
-      ) : (
-        <LogsPage logs={logs} />
-      )}
-    </div>
-  );
-};
-
 const LogsPage = ({ logs }: { logs: AuditLog[] }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = Math.ceil(logs.length / ITEMS_PER_PAGE);
@@ -2045,7 +1472,7 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>(db.getTransactions());
   const [customers, setCustomers] = useState<Customer[]>(db.getCustomers());
   const [logs, setLogs] = useState<AuditLog[]>(db.getLogs());
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'checkout' | 'products' | 'customers' | 'history' | 'report' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'checkout' | 'products' | 'customers' | 'history' | 'logs'>('dashboard');
 
   useEffect(() => {
     db.saveConfig(config);
@@ -2099,8 +1526,7 @@ export default function App() {
             <button onClick={() => setActiveTab('products')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'products' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Products</button>
             <button onClick={() => setActiveTab('customers')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'customers' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Customers</button>
             <button onClick={() => setActiveTab('history')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'history' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Transactions</button>
-            <button onClick={() => setActiveTab('report')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'report' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Reports</button>
-            <button onClick={() => setActiveTab('settings')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'settings' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Settings</button>
+            <button onClick={() => setActiveTab('logs')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'logs' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Logs</button>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -2139,10 +1565,10 @@ export default function App() {
             <SidebarItem icon={Package} label="Products" active={activeTab === 'products'} onClick={() => setActiveTab('products')} />
             <SidebarItem icon={Users} label="Customers" active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} />
             <SidebarItem icon={History} label="Transactions" active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
-            <SidebarItem icon={BarChart3} label="Reports" active={activeTab === 'report'} onClick={() => setActiveTab('report')} />
-            <SidebarItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+            <SidebarItem icon={ClipboardList} label="Audit Logs" active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} />
           </nav>
           <div className="mt-auto px-4">
+            <SidebarItem icon={Settings} label="Settings" onClick={() => {}} />
             <SidebarItem icon={LogOut} label="Logout" onClick={() => setConfig({ ...config, initialized: false })} />
           </div>
         </aside>
@@ -2163,8 +1589,7 @@ export default function App() {
               {activeTab === 'products' && <Products products={products} onUpdate={handleProductsUpdate} />}
               {activeTab === 'customers' && <Customers customers={customers} onUpdate={setCustomers} />}
               {activeTab === 'history' && <HistoryPage transactions={transactions} customers={customers} onUpdateTransaction={handleTransactionUpdate} />}
-              {activeTab === 'report' && <ReportPage transactions={transactions} products={products} customers={customers} />}
-              {activeTab === 'settings' && <SettingsPage config={config} onUpdateConfig={setConfig} logs={logs} />}
+              {activeTab === 'logs' && <LogsPage logs={logs} />}
             </motion.div>
           </AnimatePresence>
         </main>
