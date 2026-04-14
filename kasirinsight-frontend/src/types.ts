@@ -39,9 +39,19 @@ export interface Customer {
   note: string;
 }
 
+export interface BankAccount {
+  bankName: string;
+  accountNumber: string;
+  accountName: string;
+}
+
 export interface BusinessConfig {
   type: BusinessType;
   name: string;
+  address: string;
+  phone: string;
+  logo?: string;
+  bankAccounts: BankAccount[];
   initialized: boolean;
 }
 
@@ -55,4 +65,16 @@ export interface AuditLog {
   entityType: LogEntityType;
   entityId: string;
   details: string;
+}
+
+export type MovementType = 'IN' | 'OUT';
+export type StockMovementReason = 'sale' | 'restock' | 'adjustment' | 'opening';
+
+export interface StockMovement {
+  id: number;
+  productId: string;
+  type: MovementType;
+  quantity: number;
+  movementType: StockMovementReason;
+  createdAt: number;
 }

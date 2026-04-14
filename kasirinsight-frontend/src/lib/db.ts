@@ -1,4 +1,4 @@
-import { Product, Transaction, BusinessConfig, AuditLog, LogAction, LogEntityType, Customer } from '../types';
+import { Product, Transaction, BusinessConfig, AuditLog, LogAction, LogEntityType, Customer, StockMovement, MovementType, StockMovementReason } from '../types';
 
 const STORAGE_KEYS = {
   PRODUCTS: 'kasir_insight_products',
@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   CONFIG: 'kasir_insight_config',
   LOGS: 'kasir_insight_logs',
   CUSTOMERS: 'kasir_insight_customers',
+  STOCK_MOVEMENTS: 'kasir_insight_stock_movements',
 };
 
 // Initial data for demo if empty
@@ -34,6 +35,15 @@ export const db = {
       const exists = oldProducts.find(op => op.id === p.id);
       if (!exists) {
         db.addLog('create', 'product', p.id, `Created product: ${p.name}`);
+        // Record opening stock movement
+        if (p.stock > 0) {
+          db.addStockMovement({
+            productId: p.id,
+            type: 'IN',
+            quantity: p.stock,
+            movementType: 'opening'
+          });
+        }
       } else if (JSON.stringify(exists) !== JSON.stringify(p)) {
         db.addLog('update', 'product', p.id, `Updated product: ${p.name}`);
       }
@@ -68,6 +78,13 @@ export const db = {
       const product = products.find(p => p.id === item.productId);
       if (product) {
         product.stock -= item.quantity;
+        // Record sale stock movement
+        db.addStockMovement({
+          productId: item.productId,
+          type: 'OUT',
+          quantity: item.quantity,
+          movementType: 'sale'
+        });
       }
     });
     db.saveProducts(products);
@@ -112,7 +129,14 @@ export const db = {
 
   getConfig: (): BusinessConfig => {
     const data = localStorage.getItem(STORAGE_KEYS.CONFIG);
-    return data ? JSON.parse(data) : { type: 'custom', name: '', initialized: false };
+    return data ? JSON.parse(data) : { 
+      type: 'custom', 
+      name: '', 
+      address: '', 
+      phone: '', 
+      bankAccounts: [], 
+      initialized: false 
+    };
   },
 
   saveConfig: (config: BusinessConfig) => {
@@ -146,5 +170,41 @@ export const db = {
     });
 
     localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(customers));
+  },
+
+  getStockMovements: (): StockMovement[] => {
+    const data = localStorage.getItem(STORAGE_KEYS.STOCK_MOVEMENTS);
+    if (!data) return [];
+    
+    let movements: any[] = JSON.parse(data);
+    
+    // Migration: Convert string IDs to numbers if necessary
+    let needsMigration = false;
+    movements = movements.map((m, index) => {
+      if (typeof m.id === 'string') {
+        needsMigration = true;
+        return { ...m, id: index + 1 };
+      }
+      return m;
+    });
+
+    if (needsMigration) {
+      localStorage.setItem(STORAGE_KEYS.STOCK_MOVEMENTS, JSON.stringify(movements));
+    }
+
+    return movements;
+  },
+
+  addStockMovement: (movement: Omit<StockMovement, 'id' | 'createdAt'>) => {
+    const movements = db.getStockMovements();
+    const maxId = movements.length > 0 ? Math.max(...movements.map(m => m.id)) : 0;
+    
+    const newMovement: StockMovement = {
+      ...movement,
+      id: maxId + 1,
+      createdAt: Date.now()
+    };
+    movements.push(newMovement);
+    localStorage.setItem(STORAGE_KEYS.STOCK_MOVEMENTS, JSON.stringify(movements));
   },
 };

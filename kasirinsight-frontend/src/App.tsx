@@ -26,10 +26,14 @@ import {
   Users,
   Phone,
   MapPin,
-  FileText
+  FileText,
+  BarChart3,
+  Calendar,
+  ArrowRightLeft,
+  RefreshCw
 } from 'lucide-react';
 import { db } from './lib/db';
-import { Product, Transaction, BusinessConfig, BusinessType, TransactionStatus, AuditLog, Customer } from './types';
+import { Product, Transaction, BusinessConfig, BusinessType, TransactionStatus, AuditLog, Customer, BankAccount, StockMovement, MovementType, StockMovementReason } from './types';
 import { cn, formatCurrency } from './lib/utils';
 import { 
   LineChart, 
@@ -44,6 +48,8 @@ import {
   Cell
 } from 'recharts';
 import { format, subDays, isSameDay, startOfDay } from 'date-fns';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- Components ---
 
@@ -122,7 +128,14 @@ const Onboarding = ({ onComplete }: { onComplete: (config: BusinessConfig) => vo
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            onClick={() => onComplete({ type: type.id, name: type.title, initialized: true })}
+            onClick={() => onComplete({ 
+              type: type.id, 
+              name: type.title, 
+              address: '', 
+              phone: '', 
+              bankAccounts: [], 
+              initialized: true 
+            })}
             className="bg-[#2d3449]/40 backdrop-blur-xl p-8 rounded-xl border border-[#3a4a46]/15 flex flex-col items-start text-left hover:bg-[#2d3449]/60 hover:border-[#00f5d4]/40 transition-all group"
           >
             <div className="w-14 h-14 rounded-lg bg-[#171f33] flex items-center justify-center mb-8 border border-[#3a4a46]/20 group-hover:border-[#00f5d4]/40 transition-colors">
@@ -812,10 +825,15 @@ const Products = ({ products, onUpdate }: { products: Product[], onUpdate: (p: P
                     <input 
                       type="number"
                       required
+                      disabled={!!editing.id}
                       value={editing.stock}
                       onChange={e => setEditing({ ...editing, stock: Number(e.target.value) })}
-                      className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                      className={cn(
+                        "w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all",
+                        editing.id && "opacity-50 cursor-not-allowed"
+                      )}
                     />
+                    {editing.id && <p className="text-[8px] text-[#dae2fd]/40 mt-1 uppercase tracking-widest">Stock must be adjusted in Stock Management</p>}
                   </div>
                   <div>
                     <label className="block text-[10px] uppercase tracking-widest text-[#dae2fd]/60 mb-2">Profit/Unit</label>
@@ -879,21 +897,117 @@ const Products = ({ products, onUpdate }: { products: Product[], onUpdate: (p: P
   );
 };
 
-const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transactions: Transaction[], customers: Customer[], onUpdateTransaction: (t: Transaction) => void }) => {
+const HistoryPage = ({ transactions, customers, onUpdateTransaction, config }: { transactions: Transaction[], customers: Customer[], onUpdateTransaction: (t: Transaction) => void, config: BusinessConfig }) => {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<'simple' | 'range'>('simple');
   
   // Simple Filter State
   const now = new Date();
-  const [year, setYear] = useState<string>('all');
-  const [month, setMonth] = useState<string>('all');
-  const [day, setDay] = useState<string>('all');
+  const [year, setYear] = useState<string>(now.getFullYear().toString());
+  const [month, setMonth] = useState<string>((now.getMonth() + 1).toString());
+  const [day, setDay] = useState<string>(now.getDate().toString());
 
   // Range Filter State
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
+
+  const generateInvoice = (transaction: Transaction) => {
+    const doc = new jsPDF();
+    const customer = customers.find(c => c.id === transaction.customerId);
+
+    // Header
+    if (config.logo) {
+      try {
+        doc.addImage(config.logo, 'PNG', 10, 10, 30, 30);
+      } catch (e) {
+        console.error('Error adding logo to PDF', e);
+      }
+    }
+    doc.setFontSize(20);
+    doc.text(config.name || '{Business name}', 50, 20);
+    doc.setFontSize(10);
+    doc.text(config.address || '{Business Address}', 50, 28);
+    doc.text(config.phone || '{Business phone number}', 50, 34);
+
+    // Transaction Info
+    doc.text(`Tanggal : ${format(new Date(transaction.timestamp), 'dd/MM/yyyy HH:mm')}`, 10, 50);
+    doc.text(`Invoice : ${transaction.id}`, 10, 56);
+    doc.text(`Operator : admin`, 150, 50);
+
+    // Customer Info
+    doc.text(`Nama : ${customer?.name || '-'}`, 10, 66);
+    doc.text(`Telepon : ${customer?.phone || '-'}`, 10, 72);
+
+    // Items Table
+    const tableData = transaction.items.map((item, index) => [
+      index + 1,
+      item.productName,
+      '-', // Berat
+      formatCurrency(item.price),
+      formatCurrency(item.price),
+      '-', // Diskon
+      '-', // Disc > 10kg
+      formatCurrency(item.price * item.quantity),
+      '-', // Kondisi
+      '-'  // Keterangan
+    ]);
+
+    autoTable(doc, {
+      startY: 80,
+      head: [['No', 'Produk', 'Berat(gr)', 'Harga/gr', 'Harga', 'Diskon', 'Disc >10kg', 'Sub Total', 'Kondisi', 'Keterangan']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: [45, 52, 73], textColor: [255, 255, 255] },
+      styles: { fontSize: 8 },
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY || 80;
+
+    // Totals
+    doc.text('Sub Total', 140, finalY + 10);
+    doc.text(formatCurrency(transaction.totalAmount), 180, finalY + 10, { align: 'right' });
+    doc.text('Ongkos Kirim', 140, finalY + 16);
+    doc.text('Rp -', 180, finalY + 16, { align: 'right' });
+    doc.text('Total', 140, finalY + 22);
+    doc.setFontSize(12);
+    doc.text(formatCurrency(transaction.totalAmount), 180, finalY + 22, { align: 'right' });
+
+    // Bank Accounts
+    doc.setFontSize(10);
+    doc.text('Rekening Pelunasan', 10, finalY + 35);
+    config.bankAccounts?.forEach((bank, index) => {
+      if (bank.bankName) {
+        doc.text(`${bank.bankName} - ${bank.accountNumber} (${bank.accountName})`, 10, finalY + 42 + (index * 6));
+      }
+    });
+
+    // Shipping Slip (Bottom part)
+    const slipY = 220;
+    doc.setLineDashPattern([2, 2], 0);
+    doc.line(10, slipY - 5, 200, slipY - 5);
+    doc.setLineDashPattern([], 0);
+    doc.text('Slip Pengiriman', 10, slipY - 2);
+
+    doc.rect(10, slipY, 90, 60); // Penerima box
+    doc.text('Penerima:', 15, slipY + 10);
+    doc.setFontSize(12);
+    doc.text(customer?.name || '#N/A', 15, slipY + 20);
+    doc.setFontSize(10);
+    doc.text(customer?.address || '#N/A', 15, slipY + 30, { maxWidth: 80 });
+    doc.text(customer?.phone || '#N/A', 15, slipY + 50);
+
+    doc.rect(110, slipY, 90, 60); // Pengirim box
+    doc.text('Pengirim:', 115, slipY + 10);
+    doc.setFontSize(12);
+    doc.text(config.name || '{Business name}', 115, slipY + 20);
+    doc.setFontSize(10);
+    doc.text(config.address || '{Business address}', 115, slipY + 30, { maxWidth: 80 });
+    doc.text(config.phone || '{Business phone number}', 115, slipY + 50);
+
+    doc.save(`Invoice_${transaction.id}.pdf`);
+  };
 
   const statuses: TransactionStatus[] = ['paid', 'packed', 'sent'];
 
@@ -929,6 +1043,12 @@ const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transac
   const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE);
   const paginatedTransactions = [...filteredTransactions].reverse().slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
+  const totalRevenue = filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
+  const totalProfit = filteredTransactions.reduce((sum, t) => {
+    const tProfit = t.items.reduce((iSum, item) => iSum + (item.quantity * (item.price - item.cogs)), 0);
+    return sum + tProfit;
+  }, 0);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, year, month, day, filterMode, startDate, endDate]);
@@ -943,6 +1063,16 @@ const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transac
         <div>
           <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Transaction Ledger</h1>
           <p className="text-[#dae2fd]/60 font-body">Historical record of all architectural financial exchanges.</p>
+        </div>
+        <div className="flex gap-4">
+          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[160px]">
+            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Revenue</p>
+            <p className="text-2xl font-headline font-black text-[#00f5d4] tracking-tight">{formatCurrency(totalRevenue)}</p>
+          </div>
+          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[160px]">
+            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Profit</p>
+            <p className="text-2xl font-headline font-black text-[#4edea3] tracking-tight">{formatCurrency(totalProfit)}</p>
+          </div>
         </div>
       </div>
 
@@ -1200,9 +1330,18 @@ const HistoryPage = ({ transactions, customers, onUpdateTransaction }: { transac
                     Total Profit: {formatCurrency(selectedTransaction.items.reduce((sum, item) => sum + (item.quantity * (item.price - item.cogs)), 0))}
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="text-[10px] text-[#dae2fd]/40 uppercase mb-1">Tax Included (10%)</p>
-                  <p className="text-xs text-[#dae2fd]/60 italic font-light">Verified Offline Transaction</p>
+                <div className="flex flex-col items-end gap-4">
+                  <button 
+                    onClick={() => generateInvoice(selectedTransaction)}
+                    className="bg-[#00f5d4] text-[#00382f] px-6 py-3 rounded-xl font-headline font-bold flex items-center gap-2 hover:scale-[1.02] active:scale-95 transition-all shadow-[0_0_20px_rgba(0,245,212,0.2)]"
+                  >
+                    <FileText size={18} />
+                    Generate Invoice
+                  </button>
+                  <div className="text-right">
+                    <p className="text-[10px] text-[#dae2fd]/40 uppercase mb-1">Tax Included (10%)</p>
+                    <p className="text-xs text-[#dae2fd]/60 italic font-light">Verified Offline Transaction</p>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -1402,6 +1541,1040 @@ const Customers = ({ customers, onUpdate }: { customers: Customer[], onUpdate: (
   );
 };
 
+const ReportPage = ({ transactions, products, customers }: { transactions: Transaction[], products: Product[], customers: Customer[] }) => {
+  const [filterMode, setFilterMode] = useState<'simple' | 'range'>('simple');
+  const [aggregation, setAggregation] = useState<'day' | 'month' | 'year'>('day');
+  const now = new Date();
+  const [year, setYear] = useState<string>(now.getFullYear().toString());
+  const [month, setMonth] = useState<string>((now.getMonth() + 1).toString());
+  const [day, setDay] = useState<string>('all');
+
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const filteredTransactions = transactions.filter(t => {
+    const tDate = new Date(t.timestamp);
+    if (filterMode === 'simple') {
+      const matchesYear = year === 'all' || tDate.getFullYear().toString() === year;
+      const matchesMonth = month === 'all' || (tDate.getMonth() + 1).toString() === month;
+      const matchesDay = day === 'all' || tDate.getDate().toString() === day;
+      return matchesYear && matchesMonth && matchesDay;
+    } else {
+      if (!startDate || !endDate) return true;
+      const start = new Date(startDate).getTime();
+      const end = new Date(endDate).getTime();
+      return t.timestamp >= start && t.timestamp <= end;
+    }
+  });
+
+  const aggregatedData: Record<string, { revenue: number, profit: number, count: number }> = {};
+  filteredTransactions.forEach(t => {
+    let dateKey = '';
+    const date = new Date(t.timestamp);
+    if (aggregation === 'day') dateKey = format(date, 'yyyy-MM-dd');
+    else if (aggregation === 'month') dateKey = format(date, 'yyyy-MM');
+    else dateKey = format(date, 'yyyy');
+
+    if (!aggregatedData[dateKey]) {
+      aggregatedData[dateKey] = { revenue: 0, profit: 0, count: 0 };
+    }
+    aggregatedData[dateKey].revenue += t.totalAmount;
+    aggregatedData[dateKey].profit += t.items.reduce((sum, item) => sum + (item.quantity * (item.price - item.cogs)), 0);
+    aggregatedData[dateKey].count += 1;
+  });
+
+  const reportList = Object.entries(aggregatedData).map(([date, data]) => ({
+    date,
+    ...data
+  })).sort((a, b) => b.date.localeCompare(a.date));
+
+  const totalPages = Math.ceil(reportList.length / ITEMS_PER_PAGE);
+  const paginatedReport = reportList.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  const totalRevenue = reportList.reduce((sum, d) => sum + d.revenue, 0);
+  const totalProfit = reportList.reduce((sum, d) => sum + d.profit, 0);
+  const totalCount = reportList.reduce((sum, d) => sum + d.count, 0);
+
+  // Product Performance Analysis
+  const productStats: Record<string, { name: string, quantity: number, revenue: number, profit: number }> = {};
+  filteredTransactions.forEach(t => {
+    t.items.forEach(item => {
+      if (!productStats[item.productId]) {
+        productStats[item.productId] = { name: item.productName, quantity: 0, revenue: 0, profit: 0 };
+      }
+      productStats[item.productId].quantity += item.quantity;
+      productStats[item.productId].revenue += item.quantity * item.price;
+      productStats[item.productId].profit += item.quantity * (item.price - item.cogs);
+    });
+  });
+
+  const productList = Object.values(productStats);
+  const topSelling = [...productList].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
+  const mostProfitable = [...productList].sort((a, b) => b.profit - a.profit).slice(0, 5);
+  
+  const soldProductIds = new Set(Object.keys(productStats));
+  const deadStock = products.filter(p => !soldProductIds.has(p.id));
+
+  // Customer Insights
+  const customerStats: Record<string, { name: string, totalSpend: number, frequency: number, firstTransaction: number }> = {};
+  
+  // First, find first transaction for all customers to determine new vs returning
+  const firstTransactions: Record<string, number> = {};
+  transactions.forEach(t => {
+    if (t.customerId) {
+      if (!firstTransactions[t.customerId] || t.timestamp < firstTransactions[t.customerId]) {
+        firstTransactions[t.customerId] = t.timestamp;
+      }
+    }
+  });
+
+  let newCustomerRevenue = 0;
+  let returningCustomerRevenue = 0;
+  const filteredPeriodStart = filteredTransactions.length > 0 
+    ? Math.min(...filteredTransactions.map(t => t.timestamp))
+    : 0;
+
+  filteredTransactions.forEach(t => {
+    if (t.customerId) {
+      if (!customerStats[t.customerId]) {
+        const customer = customers.find(c => c.id === t.customerId);
+        customerStats[t.customerId] = { 
+          name: customer?.name || 'Unknown Customer', 
+          totalSpend: 0, 
+          frequency: 0,
+          firstTransaction: firstTransactions[t.customerId]
+        };
+      }
+      customerStats[t.customerId].totalSpend += t.totalAmount;
+      customerStats[t.customerId].frequency += 1;
+
+      // New vs Returning logic
+      if (firstTransactions[t.customerId] >= filteredPeriodStart) {
+        newCustomerRevenue += t.totalAmount;
+      } else {
+        returningCustomerRevenue += t.totalAmount;
+      }
+    } else {
+      // Guest transactions are treated as new? Or just ignored for this specific metric?
+      // Usually guest checkout is treated as "New" or "Guest"
+      newCustomerRevenue += t.totalAmount;
+    }
+  });
+
+  const topCustomers = Object.values(customerStats)
+    .sort((a, b) => b.totalSpend - a.totalSpend)
+    .slice(0, 5);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [year, month, day, filterMode, startDate, endDate]);
+
+  const years = Array.from({ length: 5 }, (_, i) => (now.getFullYear() - i).toString());
+  const months = Array.from({ length: 12 }, (_, i) => (i + 1).toString());
+  const days = Array.from({ length: 31 }, (_, i) => (i + 1).toString());
+
+  return (
+    <div className="p-8 space-y-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+        <div>
+          <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Business Reports</h1>
+          <p className="text-[#dae2fd]/60 font-body">Daily aggregation of architectural financial performance.</p>
+        </div>
+        <div className="flex gap-4">
+          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[140px]">
+            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Revenue</p>
+            <p className="text-xl font-headline font-black text-[#00f5d4] tracking-tight">{formatCurrency(totalRevenue)}</p>
+          </div>
+          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[140px]">
+            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Total Profit</p>
+            <p className="text-xl font-headline font-black text-[#4edea3] tracking-tight">{formatCurrency(totalProfit)}</p>
+          </div>
+          <div className="bg-[#2d3449]/40 backdrop-blur-xl p-4 rounded-xl border border-[#3a4a46]/10 min-w-[140px]">
+            <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold mb-1">Transactions</p>
+            <p className="text-xl font-headline font-black text-[#dae2fd] tracking-tight">{totalCount}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6 bg-[#2d3449]/20 p-6 rounded-2xl border border-[#3a4a46]/10">
+        <div className="flex justify-between items-center">
+          <div className="flex bg-[#0b1326] p-1 rounded-lg border border-[#3a4a46]/30">
+            <button 
+              onClick={() => setAggregation('day')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                aggregation === 'day' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Daily
+            </button>
+            <button 
+              onClick={() => setAggregation('month')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                aggregation === 'month' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Monthly
+            </button>
+            <button 
+              onClick={() => setAggregation('year')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                aggregation === 'year' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Yearly
+            </button>
+          </div>
+          <div className="flex bg-[#0b1326] p-1 rounded-lg border border-[#3a4a46]/30">
+            <button 
+              onClick={() => setFilterMode('simple')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                filterMode === 'simple' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Simple Date
+            </button>
+            <button 
+              onClick={() => setFilterMode('range')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                filterMode === 'range' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Date Range
+            </button>
+          </div>
+        </div>
+
+        {filterMode === 'simple' ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Year</label>
+              <select 
+                value={year}
+                onChange={e => setYear(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              >
+                <option value="all">All Years</option>
+                {years.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Month</label>
+              <select 
+                value={month}
+                onChange={e => setMonth(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              >
+                <option value="all">All Months</option>
+                {months.map(m => <option key={m} value={m}>{format(new Date(2000, parseInt(m) - 1), 'MMMM')}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Day</label>
+              <select 
+                value={day}
+                onChange={e => setDay(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              >
+                <option value="all">All Days</option>
+                {days.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Start Date</label>
+              <input 
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">End Date</label>
+              <input 
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Product Performance Analysis */}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Top Selling Products */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[#00f5d4]/10 rounded-lg text-[#00f5d4]">
+              <TrendingUp size={20} />
+            </div>
+            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Top Selling Products</h2>
+          </div>
+          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
+            {topSelling.length > 0 ? topSelling.map((p, idx) => (
+              <div key={idx} className="flex justify-between items-center p-4 border-b border-[#3a4a46]/10 last:border-0 hover:bg-[#2d3449]/40 transition-colors">
+                <div>
+                  <p className="text-sm font-headline font-bold text-[#dae2fd]">{p.name}</p>
+                  <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">{p.quantity} Units Sold</p>
+                </div>
+                <p className="font-headline font-bold text-[#00f5d4]">{formatCurrency(p.revenue)}</p>
+              </div>
+            )) : (
+              <div className="p-8 text-center text-[#dae2fd]/20 italic text-sm">No sales data available</div>
+            )}
+          </div>
+        </div>
+
+        {/* Most Profitable Products */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[#4edea3]/10 rounded-lg text-[#4edea3]">
+              <TrendingUp size={20} />
+            </div>
+            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Most Profitable Products</h2>
+          </div>
+          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
+            {mostProfitable.length > 0 ? mostProfitable.map((p, idx) => (
+              <div key={idx} className="flex justify-between items-center p-4 border-b border-[#3a4a46]/10 last:border-0 hover:bg-[#2d3449]/40 transition-colors">
+                <div>
+                  <p className="text-sm font-headline font-bold text-[#dae2fd]">{p.name}</p>
+                  <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">Margin: {((p.profit / p.revenue) * 100).toFixed(1)}%</p>
+                </div>
+                <p className="font-headline font-bold text-[#4edea3]">{formatCurrency(p.profit)}</p>
+              </div>
+            )) : (
+              <div className="p-8 text-center text-[#dae2fd]/20 italic text-sm">No profit data available</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Dead Stock Report */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="p-2 bg-[#ffb4ab]/10 rounded-lg text-[#ffb4ab]">
+            <AlertTriangle size={20} />
+          </div>
+          <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Dead Stock Report</h2>
+        </div>
+        <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
+          {deadStock.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-6">
+              {deadStock.map(p => (
+                <div key={p.id} className="p-4 bg-[#0b1326] rounded-xl border border-[#3a4a46]/10 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-lg bg-[#2d3449] flex items-center justify-center text-[#dae2fd]/20">
+                    <Package size={20} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-headline font-bold text-[#dae2fd]">{p.name}</p>
+                    <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">Stock: {p.stock} | {p.category}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-12 text-center">
+              <CheckCircle2 className="mx-auto mb-4 text-[#4edea3]/40" size={48} />
+              <p className="text-[#dae2fd]/40 uppercase tracking-widest font-bold">All products have sales activity in this period!</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Customer Insights */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-20">
+        {/* Top Customers */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[#00f5d4]/10 rounded-lg text-[#00f5d4]">
+              <Users size={20} />
+            </div>
+            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Top Customers</h2>
+          </div>
+          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 overflow-hidden">
+            {topCustomers.length > 0 ? topCustomers.map((c, idx) => (
+              <div key={idx} className="flex justify-between items-center p-4 border-b border-[#3a4a46]/10 last:border-0 hover:bg-[#2d3449]/40 transition-colors">
+                <div>
+                  <p className="text-sm font-headline font-bold text-[#dae2fd]">{c.name}</p>
+                  <p className="text-[10px] text-[#dae2fd]/40 uppercase tracking-widest font-bold">{c.frequency} Visits</p>
+                </div>
+                <p className="font-headline font-bold text-[#00f5d4]">{formatCurrency(c.totalSpend)}</p>
+              </div>
+            )) : (
+              <div className="p-8 text-center text-[#dae2fd]/20 italic text-sm">No customer data available</div>
+            )}
+          </div>
+        </div>
+
+        {/* New vs. Returning Customers */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-[#4edea3]/10 rounded-lg text-[#4edea3]">
+              <History size={20} />
+            </div>
+            <h2 className="text-xl font-headline font-bold text-[#dae2fd]">New vs. Returning</h2>
+          </div>
+          <div className="bg-[#2d3449]/20 rounded-2xl border border-[#3a4a46]/10 p-6 h-full flex flex-col justify-center">
+            <div className="space-y-6">
+              <div>
+                <div className="flex justify-between items-end mb-2">
+                  <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">New Customers</p>
+                  <p className="text-sm font-headline font-bold text-[#00f5d4]">{formatCurrency(newCustomerRevenue)}</p>
+                </div>
+                <div className="h-2 bg-[#0b1326] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-[#00f5d4] transition-all duration-1000" 
+                    style={{ width: `${(newCustomerRevenue / (newCustomerRevenue + returningCustomerRevenue || 1)) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between items-end mb-2">
+                  <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Returning Customers</p>
+                  <p className="text-sm font-headline font-bold text-[#4edea3]">{formatCurrency(returningCustomerRevenue)}</p>
+                </div>
+                <div className="h-2 bg-[#0b1326] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-[#4edea3] transition-all duration-1000" 
+                    style={{ width: `${(returningCustomerRevenue / (newCustomerRevenue + returningCustomerRevenue || 1)) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+              <div className="pt-4 border-t border-[#3a4a46]/10 flex justify-between items-center">
+                <p className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Retention Rate</p>
+                <p className="text-lg font-headline font-bold text-[#dae2fd]">
+                  {((returningCustomerRevenue / (newCustomerRevenue + returningCustomerRevenue || 1)) * 100).toFixed(1)}%
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-12 gap-4 px-6 py-4 text-[10px] uppercase tracking-widest text-[#dae2fd]/60 font-bold">
+          <div className="col-span-3">Date</div>
+          <div className="col-span-2 text-center">Transactions</div>
+          <div className="col-span-3 text-right">Revenue</div>
+          <div className="col-span-3 text-right">Profit</div>
+          <div className="col-span-1"></div>
+        </div>
+
+        {paginatedReport.length > 0 ? paginatedReport.map(item => (
+          <div key={item.date} className="grid grid-cols-12 gap-4 items-center px-6 py-5 bg-[#2d3449]/40 backdrop-blur-xl rounded-lg border border-[#3a4a46]/10 hover:border-[#00f5d4]/30 transition-all group">
+            <div className="col-span-3">
+              <p className="font-headline font-bold text-[#dae2fd] group-hover:text-[#00f5d4] transition-colors uppercase tracking-wider text-sm">
+                {aggregation === 'day' ? format(new Date(item.date), 'EEEE, MMM dd, yyyy') : 
+                 aggregation === 'month' ? format(new Date(item.date), 'MMMM yyyy') : 
+                 item.date}
+              </p>
+            </div>
+            <div className="col-span-2 text-center text-sm font-bold text-[#dae2fd]/60">
+              {item.count}
+            </div>
+            <div className="col-span-3 text-right font-headline font-bold text-[#00f5d4]">
+              {formatCurrency(item.revenue)}
+            </div>
+            <div className="col-span-3 text-right font-headline font-bold text-[#4edea3]">
+              {formatCurrency(item.profit)}
+            </div>
+            <div className="col-span-1 flex justify-end">
+              <TrendingUp size={16} className={cn(item.profit > 0 ? "text-[#4edea3]" : "text-[#ffb4ab]")} />
+            </div>
+          </div>
+        )) : (
+          <div className="text-center py-20 bg-[#2d3449]/20 rounded-xl border border-dashed border-[#3a4a46]/30">
+            <BarChart3 className="mx-auto mb-4 text-[#dae2fd]/20" size={48} />
+            <p className="text-[#dae2fd]/40 uppercase tracking-widest font-bold">No data for selected period</p>
+          </div>
+        )}
+      </div>
+
+      <Pagination 
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+      />
+    </div>
+  );
+};
+
+const StockManagement = ({ products, onUpdateProducts }: { products: Product[], onUpdateProducts: (p: Product[]) => void }) => {
+  const [movements, setMovements] = useState<StockMovement[]>(db.getStockMovements());
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newMovement, setNewMovement] = useState<{ productId: string, type: MovementType, quantity: number, movementType: StockMovementReason }>({
+    productId: '',
+    type: 'IN',
+    quantity: 0,
+    movementType: 'restock'
+  });
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterMode, setFilterMode] = useState<'simple' | 'range'>('simple');
+  const now = new Date();
+  const [year, setYear] = useState<string>(now.getFullYear().toString());
+  const [month, setMonth] = useState<string>((now.getMonth() + 1).toString());
+  const [day, setDay] = useState<string>(now.getDate().toString());
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+
+  const filteredMovements = movements.filter(m => {
+    const product = products.find(p => p.id === m.productId);
+    const mDate = new Date(m.createdAt);
+    
+    // Search Filter
+    const matchesSearch = product?.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         m.movementType.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    if (!matchesSearch) return false;
+
+    // Date Filter
+    if (filterMode === 'simple') {
+      const matchesYear = year === 'all' || mDate.getFullYear().toString() === year;
+      const matchesMonth = month === 'all' || (mDate.getMonth() + 1).toString() === month;
+      const matchesDay = day === 'all' || mDate.getDate().toString() === day;
+      return matchesYear && matchesMonth && matchesDay;
+    } else {
+      if (!startDate || !endDate) return true;
+      const start = new Date(startDate).getTime();
+      const end = new Date(endDate).getTime();
+      return m.createdAt >= start && m.createdAt <= end;
+    }
+  });
+
+  const totalPages = Math.ceil(filteredMovements.length / ITEMS_PER_PAGE);
+  const paginatedMovements = [...filteredMovements].reverse().slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, year, month, day, filterMode, startDate, endDate]);
+
+  const years = Array.from({ length: 5 }, (_, i) => (now.getFullYear() - i).toString());
+  const months = Array.from({ length: 12 }, (_, i) => (i + 1).toString());
+  const days = Array.from({ length: 31 }, (_, i) => (i + 1).toString());
+
+  const handleAddMovement = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMovement.productId || newMovement.quantity <= 0) return;
+
+    db.addStockMovement(newMovement);
+    
+    // Update product stock
+    const updatedProducts = products.map(p => {
+      if (p.id === newMovement.productId) {
+        const adjustment = newMovement.type === 'IN' ? newMovement.quantity : -newMovement.quantity;
+        return { ...p, stock: p.stock + adjustment };
+      }
+      return p;
+    });
+    
+    onUpdateProducts(updatedProducts);
+    setMovements(db.getStockMovements());
+    setShowAddModal(false);
+    setNewMovement({ productId: '', type: 'IN', quantity: 0, movementType: 'restock' });
+    setProductSearchQuery('');
+  };
+
+  const filteredProductsForModal = products.filter(p => 
+    p.name.toLowerCase().includes(productSearchQuery.toLowerCase())
+  );
+
+  return (
+    <div className="p-8 space-y-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+        <div>
+          <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Stock Management</h1>
+          <p className="text-[#dae2fd]/60 font-body">Track architectural inventory mutations and supply chain flow.</p>
+        </div>
+        <button 
+          onClick={() => setShowAddModal(true)}
+          className="bg-gradient-to-br from-[#00f5d4] to-[#4edea3] text-[#00382f] px-6 py-3 rounded-md font-headline font-bold flex items-center gap-2 shadow-[0_0_15px_rgba(0,245,212,0.3)] hover:scale-[1.02] transition-transform active:scale-95"
+        >
+          <Plus size={18} /> Record Movement
+        </button>
+      </div>
+
+      <div className="space-y-6 bg-[#2d3449]/20 p-6 rounded-2xl border border-[#3a4a46]/10">
+        <div className="flex flex-col md:flex-row gap-4 items-center">
+          <div className="relative flex-1 group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#83948f] group-focus-within:text-[#00f5d4] transition-colors" size={18} />
+            <input 
+              type="text" 
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search by Product Name or Reason..."
+              className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg pl-12 pr-4 py-2 text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+            />
+          </div>
+          <div className="flex bg-[#0b1326] p-1 rounded-lg border border-[#3a4a46]/30">
+            <button 
+              onClick={() => setFilterMode('simple')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                filterMode === 'simple' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Simple Date
+            </button>
+            <button 
+              onClick={() => setFilterMode('range')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                filterMode === 'range' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+              )}
+            >
+              Date Range
+            </button>
+          </div>
+        </div>
+
+        {filterMode === 'simple' ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Year</label>
+              <select 
+                value={year}
+                onChange={e => setYear(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              >
+                <option value="all">All Years</option>
+                {years.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Month</label>
+              <select 
+                value={month}
+                onChange={e => setMonth(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              >
+                <option value="all">All Months</option>
+                {months.map(m => <option key={m} value={m}>{format(new Date(2000, parseInt(m) - 1), 'MMMM')}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Day</label>
+              <select 
+                value={day}
+                onChange={e => setDay(e.target.value)}
+                className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+              >
+                <option value="all">All Days</option>
+                {days.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Start Date</label>
+              <div className="relative">
+                <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-[#83948f]" size={14} />
+                <input 
+                  type="date" 
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg pl-10 pr-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">End Date</label>
+              <div className="relative">
+                <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-[#83948f]" size={14} />
+                <input 
+                  type="date" 
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg pl-10 pr-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-12 gap-4 px-6 py-4 text-[10px] uppercase tracking-widest text-[#dae2fd]/60 font-bold">
+          <div className="col-span-3">Timestamp</div>
+          <div className="col-span-3">Product</div>
+          <div className="col-span-2 text-center">Type</div>
+          <div className="col-span-2 text-center">Quantity</div>
+          <div className="col-span-2 text-center">Reason</div>
+        </div>
+
+        {paginatedMovements.map(m => {
+          const product = products.find(p => p.id === m.productId);
+          return (
+            <div key={m.id} className="grid grid-cols-12 gap-4 items-center px-6 py-4 bg-[#2d3449]/40 backdrop-blur-xl rounded-lg border border-[#3a4a46]/10 hover:border-[#dae2fd]/10 transition-all group">
+              <div className="col-span-3 text-xs text-[#dae2fd]/60">
+                {format(new Date(m.createdAt), 'MMM dd, yyyy • HH:mm')}
+              </div>
+              <div className="col-span-3 font-headline font-bold text-[#dae2fd]">
+                {product?.name || 'Unknown Product'}
+              </div>
+              <div className="col-span-2 flex justify-center">
+                <span className={cn(
+                  "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                  m.type === 'IN' ? "bg-[#4edea3]/10 text-[#4edea3] border-[#4edea3]/20" : "bg-[#ffb4ab]/10 text-[#ffb4ab] border-[#ffb4ab]/20"
+                )}>
+                  {m.type}
+                </span>
+              </div>
+              <div className="col-span-2 text-center font-headline font-bold text-[#dae2fd]">
+                {m.quantity}
+              </div>
+              <div className="col-span-2 flex justify-center">
+                <span className="text-[10px] text-[#dae2fd]/60 uppercase font-bold tracking-widest border border-[#3a4a46]/30 px-2 py-1 rounded bg-[#0b1326]/40">
+                  {m.movementType}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+
+        {filteredMovements.length === 0 && (
+          <div className="text-center py-20 bg-[#2d3449]/20 rounded-xl border border-dashed border-[#3a4a46]/30">
+            <ArrowRightLeft className="mx-auto mb-4 text-[#dae2fd]/20" size={48} />
+            <p className="text-[#dae2fd]/40 uppercase tracking-widest font-bold">No stock movements recorded</p>
+          </div>
+        )}
+      </div>
+
+      <Pagination 
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
+      />
+
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAddModal(false)}
+              className="absolute inset-0 bg-[#060e20]/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative bg-[#171f33] border border-[#3a4a46]/30 rounded-2xl p-8 w-full max-w-md shadow-2xl"
+            >
+              <h2 className="text-2xl font-headline font-bold text-[#dae2fd] mb-6">Record Stock Movement</h2>
+              <form onSubmit={handleAddMovement} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest text-[#dae2fd]/60 mb-2">Product</label>
+                  <div className="space-y-2">
+                    <div className="relative group">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#83948f] group-focus-within:text-[#00f5d4] transition-colors" size={14} />
+                      <input 
+                        type="text"
+                        placeholder="Search product..."
+                        value={productSearchQuery}
+                        onChange={e => setProductSearchQuery(e.target.value)}
+                        className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg pl-9 pr-4 py-2 text-xs text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                      />
+                    </div>
+                    <select 
+                      required
+                      value={newMovement.productId}
+                      onChange={e => setNewMovement({ ...newMovement, productId: e.target.value })}
+                      className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                    >
+                      <option value="">Select Product</option>
+                      {filteredProductsForModal.map(p => (
+                        <option key={p.id} value={p.id}>{p.name} (Current: {p.stock})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-[#dae2fd]/60 mb-2">Movement Type</label>
+                    <div className="flex bg-[#0b1326] p-1 rounded-lg border border-[#3a4a46]/30">
+                      <button 
+                        type="button"
+                        onClick={() => setNewMovement({ ...newMovement, type: 'IN' })}
+                        className={cn(
+                          "flex-1 py-2 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                          newMovement.type === 'IN' ? "bg-[#4edea3] text-[#00382f]" : "text-[#dae2fd]/40"
+                        )}
+                      >
+                        IN
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setNewMovement({ ...newMovement, type: 'OUT' })}
+                        className={cn(
+                          "flex-1 py-2 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+                          newMovement.type === 'OUT' ? "bg-[#ffb4ab] text-[#00382f]" : "text-[#dae2fd]/40"
+                        )}
+                      >
+                        OUT
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-[#dae2fd]/60 mb-2">Quantity</label>
+                    <input 
+                      type="number"
+                      required
+                      min="1"
+                      value={newMovement.quantity}
+                      onChange={e => setNewMovement({ ...newMovement, quantity: Number(e.target.value) })}
+                      className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest text-[#dae2fd]/60 mb-2">Reason</label>
+                  <select 
+                    required
+                    value={newMovement.movementType}
+                    onChange={e => setNewMovement({ ...newMovement, movementType: e.target.value as StockMovementReason })}
+                    className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                  >
+                    <option value="restock">Restock</option>
+                    <option value="adjustment">Adjustment</option>
+                    <option value="sale">Sale</option>
+                    <option value="opening">Opening</option>
+                  </select>
+                </div>
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="flex-1 px-6 py-3 rounded-lg border border-[#3a4a46]/30 text-[#dae2fd]/60 hover:text-[#dae2fd] transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-1 bg-[#00f5d4] text-[#00382f] font-bold py-3 rounded-lg hover:scale-[1.02] active:scale-95 transition-all"
+                  >
+                    Record
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+const SettingsPage = ({ config, onUpdateConfig, logs }: { config: BusinessConfig, onUpdateConfig: (c: BusinessConfig) => void, logs: AuditLog[] }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'general' | 'logs'>('general');
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        onUpdateConfig({ ...config, logo: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const updateBank = (index: number, field: keyof BankAccount, value: string) => {
+    const newBanks = [...(config.bankAccounts || [])];
+    if (!newBanks[index]) {
+      newBanks[index] = { bankName: '', accountNumber: '', accountName: '' };
+    }
+    newBanks[index] = { ...newBanks[index], [field]: value };
+    onUpdateConfig({ ...config, bankAccounts: newBanks });
+  };
+
+  return (
+    <div className="p-8 space-y-8">
+      <div className="flex justify-between items-end">
+        <div>
+          <h1 className="font-headline text-4xl font-extrabold tracking-tighter text-[#dae2fd] mb-2">Settings</h1>
+          <p className="text-[#dae2fd]/60 font-body">Manage your architectural terminal configuration and audit trails.</p>
+        </div>
+        <div className="flex bg-[#2d3449]/20 p-1 rounded-lg border border-[#3a4a46]/10">
+          <button 
+            onClick={() => setActiveSubTab('general')}
+            className={cn(
+              "px-4 py-2 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+              activeSubTab === 'general' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+            )}
+          >
+            General
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('logs')}
+            className={cn(
+              "px-4 py-2 rounded-md text-[10px] font-black uppercase tracking-widest transition-all",
+              activeSubTab === 'logs' ? "bg-[#00f5d4] text-[#00382f]" : "text-[#dae2fd]/40 hover:text-[#dae2fd]"
+            )}
+          >
+            Audit Logs
+          </button>
+        </div>
+      </div>
+
+      {activeSubTab === 'general' ? (
+        <div className="max-w-4xl grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="bg-[#2d3449]/20 p-8 rounded-2xl border border-[#3a4a46]/10 space-y-8">
+            <div className="space-y-4">
+              <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Business Identity</h2>
+              
+              <div className="flex items-center gap-6 mb-6">
+                <div className="relative group">
+                  <div className="w-24 h-24 rounded-2xl bg-[#0b1326] border-2 border-dashed border-[#3a4a46]/30 flex items-center justify-center overflow-hidden transition-all group-hover:border-[#00f5d4]/50">
+                    {config.logo ? (
+                      <img src={config.logo} alt="Logo" className="w-full h-full object-cover" />
+                    ) : (
+                      <Plus size={24} className="text-[#dae2fd]/20" />
+                    )}
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      onChange={handleLogoUpload}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                    />
+                  </div>
+                  <p className="text-[10px] text-center mt-2 text-[#dae2fd]/40 uppercase font-bold tracking-widest">Business Logo</p>
+                </div>
+                <div className="flex-1 space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Business Name</label>
+                    <input 
+                      type="text"
+                      value={config.name}
+                      onChange={e => onUpdateConfig({ ...config, name: e.target.value })}
+                      className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-sm font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Phone Number</label>
+                    <input 
+                      type="text"
+                      value={config.phone || ''}
+                      onChange={e => onUpdateConfig({ ...config, phone: e.target.value })}
+                      className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-sm font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Business Address</label>
+                <textarea 
+                  rows={3}
+                  value={config.address || ''}
+                  onChange={e => onUpdateConfig({ ...config, address: e.target.value })}
+                  className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-3 text-sm font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all resize-none"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Terminal Type</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['coffee', 'retail', 'services', 'custom'] as BusinessType[]).map(type => (
+                    <button
+                      key={type}
+                      onClick={() => onUpdateConfig({ ...config, type })}
+                      className={cn(
+                        "p-3 rounded-xl border transition-all flex items-center gap-3",
+                        config.type === type 
+                          ? "bg-[#00f5d4]/10 border-[#00f5d4] text-[#00f5d4]" 
+                          : "bg-[#0b1326] border-[#3a4a46]/30 text-[#dae2fd]/40 hover:border-[#dae2fd]/20"
+                      )}
+                    >
+                      {type === 'coffee' && <Coffee size={16} />}
+                      {type === 'retail' && <Store size={16} />}
+                      {type === 'services' && <Wrench size={16} />}
+                      {type === 'custom' && <Cpu size={16} />}
+                      <span className="text-[10px] font-black uppercase tracking-widest">{type}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-8 border-t border-[#3a4a46]/10">
+              <button 
+                onClick={() => onUpdateConfig({ ...config, initialized: false })}
+                className="w-full px-6 py-3 bg-[#ffb4ab]/10 border border-[#ffb4ab]/20 text-[#ffb4ab] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#ffb4ab]/20 transition-all flex items-center justify-center gap-2"
+              >
+                <LogOut size={14} />
+                Reset Terminal Configuration
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-[#2d3449]/20 p-8 rounded-2xl border border-[#3a4a46]/10 space-y-8">
+            <div className="space-y-6">
+              <h2 className="text-xl font-headline font-bold text-[#dae2fd]">Payment Information</h2>
+              <p className="text-xs text-[#dae2fd]/40 font-body">Add up to 3 bank accounts for invoice generation.</p>
+              
+              {[0, 1, 2].map(idx => (
+                <div key={idx} className="p-4 bg-[#0b1326]/40 rounded-xl border border-[#3a4a46]/20 space-y-4">
+                  <p className="text-[10px] font-black text-[#00f5d4] uppercase tracking-widest">Bank Account #{idx + 1}</p>
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Bank Name</label>
+                      <input 
+                        type="text"
+                        placeholder="e.g. BCA, Mandiri"
+                        value={config.bankAccounts?.[idx]?.bankName || ''}
+                        onChange={e => updateBank(idx, 'bankName', e.target.value)}
+                        className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Account Number</label>
+                        <input 
+                          type="text"
+                          value={config.bankAccounts?.[idx]?.accountNumber || ''}
+                          onChange={e => updateBank(idx, 'accountNumber', e.target.value)}
+                          className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] uppercase tracking-widest text-[#dae2fd]/40 font-bold">Account Name</label>
+                        <input 
+                          type="text"
+                          value={config.bankAccounts?.[idx]?.accountName || ''}
+                          onChange={e => updateBank(idx, 'accountName', e.target.value)}
+                          className="w-full bg-[#0b1326] border border-[#3a4a46]/30 rounded-lg px-4 py-2 text-xs font-bold text-[#dae2fd] focus:border-[#00f5d4] outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <LogsPage logs={logs} />
+      )}
+    </div>
+  );
+};
+
 const LogsPage = ({ logs }: { logs: AuditLog[] }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = Math.ceil(logs.length / ITEMS_PER_PAGE);
@@ -1472,7 +2645,7 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>(db.getTransactions());
   const [customers, setCustomers] = useState<Customer[]>(db.getCustomers());
   const [logs, setLogs] = useState<AuditLog[]>(db.getLogs());
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'checkout' | 'products' | 'customers' | 'history' | 'logs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'checkout' | 'products' | 'customers' | 'history' | 'report' | 'stock' | 'settings'>('dashboard');
 
   useEffect(() => {
     db.saveConfig(config);
@@ -1526,7 +2699,9 @@ export default function App() {
             <button onClick={() => setActiveTab('products')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'products' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Products</button>
             <button onClick={() => setActiveTab('customers')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'customers' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Customers</button>
             <button onClick={() => setActiveTab('history')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'history' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Transactions</button>
-            <button onClick={() => setActiveTab('logs')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'logs' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Logs</button>
+            <button onClick={() => setActiveTab('report')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'report' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Reports</button>
+            <button onClick={() => setActiveTab('stock')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'stock' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Stock</button>
+            <button onClick={() => setActiveTab('settings')} className={cn("px-4 py-2 rounded-lg transition-all", activeTab === 'settings' ? "text-[#d7fff3] border-b-2 border-[#00f5d4]" : "text-[#dae2fd]/60 hover:bg-[#2d3449]/40")}>Settings</button>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -1565,10 +2740,11 @@ export default function App() {
             <SidebarItem icon={Package} label="Products" active={activeTab === 'products'} onClick={() => setActiveTab('products')} />
             <SidebarItem icon={Users} label="Customers" active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} />
             <SidebarItem icon={History} label="Transactions" active={activeTab === 'history'} onClick={() => setActiveTab('history')} />
-            <SidebarItem icon={ClipboardList} label="Audit Logs" active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} />
+            <SidebarItem icon={BarChart3} label="Reports" active={activeTab === 'report'} onClick={() => setActiveTab('report')} />
+            <SidebarItem icon={ArrowRightLeft} label="Stock" active={activeTab === 'stock'} onClick={() => setActiveTab('stock')} />
+            <SidebarItem icon={Settings} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
           </nav>
           <div className="mt-auto px-4">
-            <SidebarItem icon={Settings} label="Settings" onClick={() => {}} />
             <SidebarItem icon={LogOut} label="Logout" onClick={() => setConfig({ ...config, initialized: false })} />
           </div>
         </aside>
@@ -1588,8 +2764,10 @@ export default function App() {
               {activeTab === 'checkout' && <Checkout products={products} customers={customers} transactions={transactions} onComplete={handleTransaction} />}
               {activeTab === 'products' && <Products products={products} onUpdate={handleProductsUpdate} />}
               {activeTab === 'customers' && <Customers customers={customers} onUpdate={setCustomers} />}
-              {activeTab === 'history' && <HistoryPage transactions={transactions} customers={customers} onUpdateTransaction={handleTransactionUpdate} />}
-              {activeTab === 'logs' && <LogsPage logs={logs} />}
+              {activeTab === 'history' && <HistoryPage transactions={transactions} customers={customers} onUpdateTransaction={handleTransactionUpdate} config={config} />}
+              {activeTab === 'report' && <ReportPage transactions={transactions} products={products} customers={customers} />}
+              {activeTab === 'stock' && <StockManagement products={products} onUpdateProducts={handleProductsUpdate} />}
+              {activeTab === 'settings' && <SettingsPage config={config} onUpdateConfig={setConfig} logs={logs} />}
             </motion.div>
           </AnimatePresence>
         </main>
