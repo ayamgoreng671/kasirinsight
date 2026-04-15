@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { InsightsPanel } from "./components/InsightsPanel";
 import { 
   LayoutDashboard, 
   ShoppingCart, 
@@ -53,7 +54,7 @@ import autoTable from 'jspdf-autotable';
 
 // --- Components ---
 
-const ITEMS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = 6;
 
 const Pagination = ({ currentPage, totalPages, onPageChange }: { currentPage: number, totalPages: number, onPageChange: (page: number) => void }) => {
   if (totalPages <= 1) return null;
@@ -1811,8 +1812,18 @@ const ReportPage = ({ transactions, products, customers }: { transactions: Trans
       </div>
 
       {/* Product Performance Analysis */}
-
+<div className="grid grid-cols-1 lg:grid-cols-1 gap-8">
+                          <InsightsPanel
+          reportList={reportList}
+          productList={productList}
+          topSelling={topSelling}
+          mostProfitable={mostProfitable}
+          deadStock={deadStock}
+          totalRevenue={totalRevenue}
+        />
+</div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
         {/* Top Selling Products */}
         <div className="space-y-4">
           <div className="flex items-center gap-3 mb-2">
@@ -1969,6 +1980,7 @@ const ReportPage = ({ transactions, products, customers }: { transactions: Trans
           <div className="col-span-3 text-right">Revenue</div>
           <div className="col-span-3 text-right">Profit</div>
           <div className="col-span-1"></div>
+
         </div>
 
         {paginatedReport.length > 0 ? paginatedReport.map(item => (
